@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "neurocut": {
+      "command": "/ABS/PATH/NeuroCut/.venv/bin/python",
+      "args": ["-m", "neurocut"],
+      "env": { "NEUROCUT_TRANSPORT": "stdio" }
+    }
+  }
+}

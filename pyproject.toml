@@ -1,0 +1,17 @@
+[project]
+name = "neurocut"
+version = "0.1.0"
+description = "MLT-backed multi-track video editor exposed to an AI over MCP"
+requires-python = ">=3.10"
+dependencies = ["fastmcp>=3.0", "pillow>=10"]
+# also requires system: ffmpeg, ffprobe, melt (MLT) with python bindings (mlt7)
+
+[project.scripts]
+neurocut = "neurocut.server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["neurocut"]
