@@ -86,24 +86,43 @@ def fetch_media(url_or_path: str) -> str:
 _GF_CSS_URL_RE = re.compile(r"url\((https://[^)\s]+)\)")
 
 
+def _fetch_css(url: str) -> str:
+    # An unrecognized User-Agent makes Google serve plain TTF (skia/PIL/fontconfig
+    # can't read woff2).
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "NeuroCut font fetcher", "Accept": "text/css,*/*"})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return resp.read().decode("utf-8", "replace")
+
+
 def _google_font_url(family: str, weight: int, italic: bool) -> str:
-    fam = urllib.parse.quote(family)
-    axis = f"ital,wght@1,{weight}" if italic else f"wght@{weight}"
-    css = f"https://fonts.googleapis.com/css2?family={fam}:{axis}"
-    req = urllib.request.Request(css, headers={
-        "User-Agent": "neurocut/0.1 font-fetch", "Accept": "text/css,*/*"})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            body = resp.read().decode("utf-8", "replace")
-    except Exception as e:  # noqa: BLE001
-        raise FetchError(f"Google Fonts lookup failed for {family!r}: {e}") from e
-    urls = _GF_CSS_URL_RE.findall(body)
-    if not urls:
-        raise FetchError(f"no @font-face src for {family!r}; try font_url= a .ttf/.otf")
-    for u in urls:
-        if u.lower().split("?")[0].endswith((".ttf", ".otf")):
-            return u
-    return urls[0]
+    fam = family.strip().replace(" ", "+")
+    # Try specific axes first, then progressively looser - a family that lacks the
+    # requested weight/italic returns HTTP 400, so fall back to the bare family.
+    axes = []
+    if italic:
+        axes.append(f":ital,wght@1,{weight}")
+        axes.append(":ital@1")
+    axes.append(f":wght@{weight}")
+    axes.append("")
+    last = None
+    for ax in axes:
+        css = f"https://fonts.googleapis.com/css2?family={fam}{ax}&display=swap"
+        try:
+            body = _fetch_css(css)
+        except Exception as e:  # noqa: BLE001  (400 for a missing variant, etc.)
+            last = e
+            continue
+        urls = _GF_CSS_URL_RE.findall(body)
+        ttf = [u for u in urls if u.lower().split("?")[0].endswith((".ttf", ".otf"))]
+        if ttf:
+            return ttf[0]
+        if urls:
+            return urls[0]
+    raise FetchError(
+        f"Google Fonts has no usable file for {family!r} "
+        f"(weight {weight}{', italic' if italic else ''}); last error: {last}. "
+        f"Pass font_url= a direct .ttf/.otf instead.")
 
 
 def fetch_font(*, url: str | None = None, google: str | None = None,

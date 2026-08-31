@@ -265,7 +265,7 @@ def add_text(text: str, track: int, duration: float = 3.0,
              start: float | None = None, size: int | None = None,
              color: str = "#ffffffff", position: str = "bottom",
              font_google: str | None = None, font_url: str | None = None,
-             weight: int = 600, italic: bool = False, bg: str = "#00000000",
+             weight: int = 400, italic: bool = False, bg: str = "#00000000",
              outline: int = 2, outline_color: str = "#cc000000",
              project_id: str | None = None) -> str:
     """Add a text/caption clip on a video track. position: top|middle|bottom or
