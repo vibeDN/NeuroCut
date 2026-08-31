@@ -73,8 +73,15 @@ In Claude → Settings → Connectors → Add custom connector:
 `add_clip` · `add_color` · `add_text` · `move_clip` · `trim_clip` · `split_clip`
 · `remove_clip` · `set_clip_speed` · `set_clip_fade` · `set_clip_gain`
 `add_filter` · `add_transform` · `clear_filters` · `crossfade`
-`preview` · `storyboard` · `render_video` · `save_mlt` · `undo` · `redo`
+`preview` · `storyboard` · `render_video` · `save_mlt` · `get_download_link`
+· `undo` · `redo`
 `batch`
+
+`render_video` / `save_mlt` return a `download_url` (`GET /dl/<token>/<name>`,
+opens in a browser with no auth) so the model can hand the finished file to the
+user; `get_download_link` re-issues one for an earlier render. Set
+`NEUROCUT_PUBLIC_URL` (run.sh does this from the tunnel) so the links are
+absolute.
 
 Time is in **seconds**. Track 0 is the bottom video layer; higher video tracks
 composite on top. Overlapping clips on one track are auto-laned, so text/PiP

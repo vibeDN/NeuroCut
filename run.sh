@@ -25,6 +25,17 @@ for _ in $(seq 1 30); do
   [ -n "$URL" ] && break; sleep 1
 done
 echo "$URL" > .run/url
+
+# hand the public URL to the server so download links are absolute even if a
+# proxy strips forwarding headers
+if [ -n "$URL" ]; then
+  for pid in $(ss -tlnpH "sport = :${PORT}" 2>/dev/null | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u); do kill "$pid" 2>/dev/null || true; done
+  sleep 1
+  NEUROCUT_TOKEN="$TOKEN" NEUROCUT_PORT="$PORT" NEUROCUT_PUBLIC_URL="$URL" \
+    NEUROCUT_EXPORT="${NEUROCUT_EXPORT:-$HOME/neurocut-output}" \
+    nohup "$PY" -m neurocut > .run/server.log 2>&1 &
+  echo "server restarted with NEUROCUT_PUBLIC_URL=$URL (pid $!)"
+fi
 cat <<MSG
 
   Connector URL : ${URL:-<check .run/tunnel.log>}/mcp

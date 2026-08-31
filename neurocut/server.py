@@ -8,12 +8,15 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import threading
 
 import mcp.types as _mt
 from fastmcp import FastMCP
+from fastmcp.server.dependencies import get_http_request
 from fastmcp.tools import ToolResult
 from fastmcp.utilities.types import Image
+from starlette.responses import FileResponse, JSONResponse
 
 from . import mltxml, render
 from .fonts import ensure_font
@@ -30,6 +33,7 @@ os.makedirs(EXPORT_DIR, exist_ok=True)
 _PROJECTS: dict[str, Project] = {}
 _ORDER: list[str] = []
 _LOCK = threading.RLock()
+_DOWNLOADS: dict[str, str] = {}   # unguessable token -> file path
 
 INSTRUCTIONS = """
 NeuroCut is a multi-track video editor. Time is in SECONDS (floats). Track index
@@ -46,7 +50,9 @@ EFFICIENT WORKFLOW (this keeps token cost low):
   4. Fix what's wrong; undo() if an edit goes bad.
   5. render() writes the final video to disk (costs no image tokens).
 
-Never expect to receive video - you only ever get still preview frames.
+Never expect to receive video - you only ever get still preview frames. After
+render_video, hand the user the `download_url` from the result (opens in a
+browser, no login); get_download_link re-issues one for an earlier render.
 """.strip()
 
 mcp = FastMCP("neurocut", instructions=INSTRUCTIONS)
@@ -57,8 +63,9 @@ class _TokenGate:
         self.app, self.token = app, token
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http" and not scope.get("path", "").startswith(
-                "/.well-known"):
+        path = scope.get("path", "")
+        if scope["type"] == "http" and not path.startswith(
+                ("/.well-known", "/dl/")):
             h = dict(scope.get("headers") or [])
             supplied = h.get(b"x-neurocut-token", b"").decode()
             auth = h.get(b"authorization", b"").decode()
@@ -104,6 +111,42 @@ def _ok(pr: Project, msg: str) -> str:
 
 def _xml(pr: Project) -> str:
     return mltxml.to_xml(pr)
+
+
+def _public_base() -> str | None:
+    env = os.environ.get("NEUROCUT_PUBLIC_URL")
+    if env:
+        return env.rstrip("/")
+    try:
+        req = get_http_request()
+        host = req.headers.get("x-forwarded-host") or req.headers.get("host")
+        proto = req.headers.get("x-forwarded-proto") or req.url.scheme or "http"
+        if host:
+            return f"{proto}://{host}"
+    except Exception:  # noqa: BLE001  (stdio transport, or called off-request)
+        pass
+    return None
+
+
+def _download_url(path: str) -> str | None:
+    if not os.path.isfile(path):
+        return None
+    tok = secrets.token_urlsafe(16)
+    _DOWNLOADS[tok] = path
+    if len(_DOWNLOADS) > 200:
+        for k in list(_DOWNLOADS)[:-200]:
+            _DOWNLOADS.pop(k, None)
+    base = _public_base()
+    return f"{base}/dl/{tok}/{os.path.basename(path)}" if base else None
+
+
+@mcp.custom_route("/dl/{token}/{name}", methods=["GET"])
+async def _serve_download(request):
+    path = _DOWNLOADS.get(request.path_params["token"])
+    if not path or not os.path.isfile(path):
+        return JSONResponse({"error": "unknown or expired download link"},
+                            status_code=404)
+    return FileResponse(path, filename=os.path.basename(path))
 
 
 # --------------------------------------------------------------------------- #
@@ -554,7 +597,16 @@ def render_video(filename: str | None = None, preset: str = "mp4",
         xml = _xml(pr)
     info = render.render_video(xml, name, preset=preset, scale=scale,
                                t_in=start, t_out=end, project_fps=pr.fps)
-    return f"rendered {info['bytes']} bytes -> {info['path']}"
+    url = _download_url(info["path"])
+    mb = info["bytes"] / 1e6
+    out = {"path": info["path"], "size_mb": round(mb, 2),
+           "duration": round(pr.duration(), 2)}
+    if url:
+        out["download_url"] = url
+        out["note"] = "give the user download_url; it works in a browser with no auth"
+    else:
+        out["note"] = f"file is on the host at {info['path']}"
+    return json.dumps(out)
 
 
 @mcp.tool
@@ -568,7 +620,22 @@ def save_mlt(filename: str | None = None, project_id: str | None = None) -> str:
         xml = _xml(pr)
     with open(name, "w") as f:
         f.write(xml)
-    return f"wrote {name}"
+    url = _download_url(name)
+    return json.dumps({"path": name, "download_url": url} if url else {"path": name})
+
+
+@mcp.tool
+def get_download_link(filename: str, project_id: str | None = None) -> str:
+    """Make a fresh browser-openable download URL for a file already written to
+    the output directory (e.g. a previous render). Give the URL to the user."""
+    path = filename if os.path.isabs(filename) else os.path.join(EXPORT_DIR, filename)
+    if not os.path.isfile(path):
+        raise ProjectError(f"no such file: {path}")
+    url = _download_url(path)
+    if not url:
+        return json.dumps({"path": path,
+                           "note": "no public URL available; file is on the host"})
+    return json.dumps({"download_url": url, "size_mb": round(os.path.getsize(path) / 1e6, 2)})
 
 
 @mcp.tool
